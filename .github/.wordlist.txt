@@ -37,6 +37,7 @@ AdvSendAdvert
 AE
 aef
 AES
+AFL
 AIDL
 algs
 alloc
@@ -340,6 +341,7 @@ datamodel
 DataModelRevision
 dataset
 datasets
+datastore
 DataVersion
 dbf
 DBG
@@ -451,6 +453,7 @@ dpkg
 dropdown
 dryrun
 DS
+DSLS
 duplicative
 DUT
 DUTS
@@ -459,6 +462,7 @@ DV
 DVK
 dynload
 eabi
+EAF
 EB
 ECC
 ECD
@@ -549,6 +553,7 @@ feff
 ffaa
 ffeebaefa
 FFF
+FFFFFFFFFFFF0102
 fffe
 fffff
 Fi
@@ -563,12 +568,15 @@ forkpty
 FOTA
 FreeRTOS
 FreeRTOSConfig
+FS
 fsl
 fstab
 fsync
 ftd
 fullclean
 fuzzer
+fuzzers
+fuzztest
 FW
 gbl
 gcloud
@@ -727,6 +735,7 @@ isUpperCase
 itemName
 iterable
 itsfoss
+IW
 JDK
 jinja
 JLink
@@ -855,6 +864,7 @@ MbedNewTarget
 mbedos
 mbedTarget
 mbedTLS
+MCORE
 mcu
 MCUboot
 mcumgr
@@ -884,6 +894,7 @@ microcontroller
 microcontrollers
 MicroSD
 middleware
+MIMXRT
 minApplicableSoftwareVersion
 Minicom
 MinInterval
@@ -915,6 +926,7 @@ Multicast
 multilib
 Multiprotocol
 multithreaded
+Murata
 mutex
 mutexes
 mv
@@ -946,8 +958,6 @@ NitricOxideConcentrationMeasurement
 NitrogenDioxideConcentrationMeasurement
 nl
 nltest
-NLUnitTest
-NLUnitTests
 nmcli
 nmtui
 noc
@@ -999,6 +1009,7 @@ OpenThreadDemo
 openweave
 OperationalCredentials
 operationalDataset
+operationalstate
 opkg
 OPTIGA
 optionMask
@@ -1006,6 +1017,7 @@ optionOverride
 optionsMask
 optionsOverride
 orgs
+OSS
 OTA
 OTADownloader
 otaDownloadPath
@@ -1443,6 +1455,8 @@ trackFree
 TransferSession
 transitionTime
 TransportMgrBase
+triaged
+triaging
 TriggerEffect
 TRNG
 trustm
@@ -1528,6 +1542,7 @@ virtualenv
 visualstudio
 vlatest
 VLEDs
+vm
 vn
 vnc
 vous
@@ -1594,6 +1609,7 @@ xFFF
 xFFFF
 xfffff
 xFFFFFFEFFFFFFFFF
+XMLPICSValidator
 xtensa
 xvzf
 xwayland
@@ -1620,3 +1636,5 @@ zhengyaohan
 Zigbee
 zigbeealliance
 zigbeethread
+zsdk
+TBR

@@ -109,6 +109,10 @@
 #define CHIP_DEVICE_CONFIG_EVENT_LOGGING_DEBUG_BUFFER_SIZE (256)
 #endif
 
+// telink platform does not support ethernet yet, but we need this config defined as we share the Zephyr platform
+#ifndef CHIP_DEVICE_CONFIG_ENABLE_ETHERNET
+#define CHIP_DEVICE_CONFIG_ENABLE_ETHERNET 0
+#endif // CHIP_DEVICE_CONFIG_ENABLE_ETHERNET
 
 #ifdef CONFIG_BT
 #define CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE CONFIG_BT
