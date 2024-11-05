@@ -26,11 +26,11 @@
 		};
 		storage_partition: partition@103000 {
 			label = "storage";
-			reg = <0x103000 0xc000>;
+			reg = <0x103000 0x7e000>;
 		};
-		slot1_partition: partition@10f000 {
+		slot1_partition: partition@181000 {
 			label = "image-1";
-			reg = <0x10f000 0xef000>;
+			reg = <0x181000 0x7d000>;
 		};
 		vendor_partition: partition@1fe000 {
 			label = "vendor-data";
