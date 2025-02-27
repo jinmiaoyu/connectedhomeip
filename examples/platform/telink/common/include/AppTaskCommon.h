@@ -67,6 +67,18 @@ public:
     CHIP_ERROR StartApp();
     void PostEvent(AppEvent * event);
 
+#ifdef CONFIG_TFLM_FEATURE
+    void SetThreadStateChangedEventCapturedFlag(void)
+    {
+        mThreadStateChangedEventCaptured = true;
+    }
+
+    bool GetThreadStateChangedEventCapturedFlag(void)
+    {
+        return mThreadStateChangedEventCaptured;
+    }
+#endif
+
     static void IdentifyEffectHandler(Clusters::Identify::EffectIdentifierEnum aEffect);
     static void IdentifyStartHandler(Identify *);
     static void IdentifyStopHandler(Identify *);
@@ -82,7 +94,16 @@ public:
     } ButtonId;
 #endif
 
+#ifdef CONFIG_TFLM_FEATURE
+    static void TriggerMicroSpeechCallback();
+    static void TriggerMicroSpeechEventHandler(AppEvent * aEvent);
+#endif
+
 protected:
+#ifdef CONFIG_TFLM_FEATURE
+    bool mThreadStateChangedEventCaptured;
+#endif
+
     CHIP_ERROR InitCommonParts(void);
     void PrintFirmwareInfo(void);
 
