@@ -47,6 +47,8 @@ private:
     friend AppTask & GetAppTask(void);
     friend class AppTaskCommon;
 
+    void InitDynamicEndpoints(void);
+
     CHIP_ERROR Init(void);
     void LinkLeds(LedManager & ledManager);
 

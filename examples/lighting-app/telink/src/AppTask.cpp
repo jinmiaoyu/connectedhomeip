@@ -23,10 +23,23 @@
 #include "LEDManager.h"
 #include "PWMManager.h"
 
+#include "Device.h"
+
 #include <app-common/zap-generated/attributes/Accessors.h>
+#include <app/util/af-types.h>
+#include <app/util/attribute-storage.h>
+#include <app/util/endpoint-config-api.h>
+
+using namespace chip::app::Clusters;
 
 LOG_MODULE_DECLARE(app, CONFIG_CHIP_APP_LOG_LEVEL);
 
+#define DEVICE_TYPE_LO_ON_OFF_LIGHT 0x0100
+
+// Device Version for dynamic endpoints:
+#define DEVICE_VERSION_DEFAULT 1
+
+#define ZCL_ON_OFF_CLUSTER_REVISION (4u)
 namespace {
 bool sfixture_on;
 uint8_t sBrightness;
@@ -38,6 +51,110 @@ RgbColor_t sLedRgb;
 } // namespace
 
 AppTask AppTask::sAppTask;
+
+namespace {
+const int kNodeLabelSize = 32;
+const int kUniqueIdSize  = 32;
+// Current ZCL implementation of Struct uses a max-size array of 254 bytes
+const int kDescriptorAttributeArraySize = 254;
+
+const EmberAfDeviceType gOnOffDeviceTypes[] = { { DEVICE_TYPE_LO_ON_OFF_LIGHT, DEVICE_VERSION_DEFAULT } };
+
+static EndpointId gCurrentEndpointId;
+static EndpointId gFirstDynamicEndpointId;
+
+static Device *gDevices[CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT + 1];
+// ---------------------------------------------------------------------------
+//
+// LIGHT ENDPOINT: contains the following clusters:
+//   - On/Off
+//   - Descriptor
+
+// Declare On/Off cluster attributes
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(onOffAttrs)
+    DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::OnOff::Id, BOOLEAN, 1, 0), /* on/off */
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
+
+// Declare Descriptor cluster attributes
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(descriptorAttrs)
+    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::DeviceTypeList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* device list */
+    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::ServerList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* server list */
+    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::ClientList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* client list */
+    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::PartsList::Id, ARRAY, kDescriptorAttributeArraySize, 0),  /* parts list */
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
+
+// Declare Cluster List for Bridged Light endpoint
+// TODO: It's not clear whether it would be better to get the command lists from
+// the ZAP config on our last fixed endpoint instead.
+constexpr CommandId onOffIncomingCommands[] = {
+    app::Clusters::OnOff::Commands::Off::Id,
+    app::Clusters::OnOff::Commands::On::Id,
+    app::Clusters::OnOff::Commands::Toggle::Id,
+    app::Clusters::OnOff::Commands::OffWithEffect::Id,
+    app::Clusters::OnOff::Commands::OnWithRecallGlobalScene::Id,
+    app::Clusters::OnOff::Commands::OnWithTimedOff::Id,
+    kInvalidCommandId,
+};
+
+DECLARE_DYNAMIC_CLUSTER_LIST_BEGIN(dynamicLightClusters)
+    DECLARE_DYNAMIC_CLUSTER(OnOff::Id, onOffAttrs, ZAP_CLUSTER_MASK(SERVER), onOffIncomingCommands, nullptr),
+    DECLARE_DYNAMIC_CLUSTER(Descriptor::Id, descriptorAttrs, ZAP_CLUSTER_MASK(SERVER), nullptr, nullptr),
+DECLARE_DYNAMIC_CLUSTER_LIST_END;
+
+// Declare Dynamic Light endpoint
+DECLARE_DYNAMIC_ENDPOINT(dynamicLightEndpoint, dynamicLightClusters);
+DataVersion gLight1DataVersions[ArraySize(dynamicLightClusters)];
+
+DeviceOnOff Light1("Light 1", "Office");
+}
+
+int AddDeviceEndpoint(Device* dev, EmberAfEndpointType* ep, const Span<const EmberAfDeviceType>& deviceTypeList,
+    const Span<DataVersion>& dataVersionStorage, chip::EndpointId parentEndpointId = chip::kInvalidEndpointId)
+{
+    uint8_t index = 0;
+    while (index < CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT)
+    {
+        if (nullptr == gDevices[index])
+        {
+            gDevices[index] = dev;
+            CHIP_ERROR err;
+            while (true)
+            {
+                // Todo: Update this to schedule the work rather than use this lock
+                DeviceLayer::StackLock lock;
+                dev->SetEndpointId(gCurrentEndpointId);
+                dev->SetParentEndpointId(parentEndpointId);
+                err =
+                    emberAfSetDynamicEndpoint(index, gCurrentEndpointId, ep, dataVersionStorage, deviceTypeList, parentEndpointId);
+                if (err == CHIP_NO_ERROR)
+                {
+                    ChipLogProgress(DeviceLayer, "Added device %s to dynamic endpoint %d (index=%d)", dev->GetName(),
+                        gCurrentEndpointId, index);
+
+                    if (dev->GetUniqueId()[0] == '\0')
+                    {
+                        dev->GenerateUniqueId();
+                    }
+
+                    return index;
+                }
+                if (err != CHIP_ERROR_ENDPOINT_EXISTS)
+                {
+                    gDevices[index] = nullptr;
+                    return -1;
+                }
+                // Handle wrap condition
+                if (++gCurrentEndpointId < gFirstDynamicEndpointId)
+                {
+                    gCurrentEndpointId = gFirstDynamicEndpointId;
+                }
+            }
+        }
+        index++;
+    }
+    ChipLogProgress(DeviceLayer, "Failed to add dynamic endpoint: No endpoints available!");
+    return -1;
+}
 
 bool AppTask::IsTurnedOn() const
 {
@@ -59,6 +176,8 @@ CHIP_ERROR AppTask::Init(void)
 {
     SetExampleButtonCallbacks(LightingActionEventHandler);
     InitCommonParts();
+
+    InitDynamicEndpoints();
 
     Protocols::InteractionModel::Status status;
 
@@ -82,6 +201,130 @@ CHIP_ERROR AppTask::Init(void)
     }
 
     return CHIP_NO_ERROR;
+}
+
+void AppTask::InitDynamicEndpoints(void)
+{
+    uint16_t dynamicEndpointCount = CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT;
+    LOG_INF("dynamicEndpointCount = %d", dynamicEndpointCount);
+
+    uint16_t fixedEndpointCount = emberAfFixedEndpointCount();
+    LOG_INF("fixedEndpointCount = %d", fixedEndpointCount);
+
+    Light1.SetReachable(true);
+
+    for (size_t i = 0; i < CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT; i++)
+    {
+        gDevices[i] = nullptr;
+    }
+
+    gFirstDynamicEndpointId = static_cast<chip::EndpointId>(
+        static_cast<int>(emberAfEndpointFromIndex(static_cast<uint16_t>(emberAfFixedEndpointCount() - 1))) + 1);
+
+    LOG_INF("FirstDynamicEndpointId = %d", gFirstDynamicEndpointId);
+
+    gCurrentEndpointId = gFirstDynamicEndpointId;
+
+    // Disable last fixed endpoint, which is used as a placeholder for all of the
+    // supported clusters so that ZAP will generated the requisite code.
+    emberAfEndpointEnableDisable(emberAfEndpointFromIndex(static_cast<uint16_t>(emberAfFixedEndpointCount() - 1)), false);
+
+    // Add light 1 -> will be mapped to ZCL endpoints 3
+    AddDeviceEndpoint(&Light1, &dynamicLightEndpoint, Span<const EmberAfDeviceType>(gOnOffDeviceTypes),
+                      Span<DataVersion>(gLight1DataVersions), 1);
+
+    LOG_INF("InitDynamicEndpoints: Done");
+}
+
+Protocols::InteractionModel::Status HandleReadOnOffAttribute(DeviceOnOff* dev, chip::AttributeId attributeId, uint8_t* buffer,
+    uint16_t maxReadLength)
+{
+    ChipLogProgress(DeviceLayer, "HandleReadOnOffAttribute: attrId = %d, maxReadLength = %d", attributeId, maxReadLength);
+
+    if ((attributeId == OnOff::Attributes::OnOff::Id) && (maxReadLength == 1))
+    {
+        *buffer = dev->IsOn() ? 1 : 0;
+    }
+    else if ((attributeId == OnOff::Attributes::ClusterRevision::Id) && (maxReadLength == 2))
+    {
+        uint16_t rev = ZCL_ON_OFF_CLUSTER_REVISION;
+        memcpy(buffer, &rev, sizeof(rev));
+    }
+    else
+    {
+        return Protocols::InteractionModel::Status::Failure;
+    }
+
+    return Protocols::InteractionModel::Status::Success;
+}
+
+Protocols::InteractionModel::Status emberAfExternalAttributeReadCallback(EndpointId endpoint, ClusterId clusterId,
+    const EmberAfAttributeMetadata* attributeMetadata,
+    uint8_t* buffer, uint16_t maxReadLength)
+{
+    uint16_t endpointIndex = emberAfGetDynamicIndexFromEndpoint(endpoint);
+
+    ChipLogProgress(DeviceLayer, "emberAfExternalAttributeReadCallback: ep = %d", endpoint);
+
+    Protocols::InteractionModel::Status ret = Protocols::InteractionModel::Status::Failure;
+
+    if ((endpointIndex < CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT) && (gDevices[endpointIndex] != nullptr))
+    {
+        Device* dev = gDevices[endpointIndex];
+
+        if (clusterId == OnOff::Id)
+        {
+            ret = HandleReadOnOffAttribute(static_cast<DeviceOnOff*>(dev), attributeMetadata->attributeId, buffer, maxReadLength);
+        }
+    }
+
+    return ret;
+}
+
+Protocols::InteractionModel::Status HandleWriteOnOffAttribute(DeviceOnOff * dev, chip::AttributeId attributeId, uint8_t * buffer)
+{
+    ChipLogProgress(DeviceLayer, "HandleWriteOnOffAttribute: attrId = %d", attributeId);
+
+    if ((attributeId == OnOff::Attributes::OnOff::Id) && (dev->IsReachable()))
+    {
+        if (*buffer)
+        {
+            dev->SetOnOff(true);
+        }
+        else
+        {
+            dev->SetOnOff(false);
+        }
+    }
+    else
+    {
+        return Protocols::InteractionModel::Status::Failure;
+    }
+
+    return Protocols::InteractionModel::Status::Success;
+}
+
+Protocols::InteractionModel::Status emberAfExternalAttributeWriteCallback(EndpointId endpoint, ClusterId clusterId,
+    const EmberAfAttributeMetadata* attributeMetadata,
+    uint8_t* buffer)
+{
+    uint16_t endpointIndex = emberAfGetDynamicIndexFromEndpoint(endpoint);
+
+    Protocols::InteractionModel::Status ret = Protocols::InteractionModel::Status::Failure;
+
+    ChipLogProgress(DeviceLayer, "emberAfExternalAttributeWriteCallback: ep = %d", endpoint);
+
+    if (endpointIndex < CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT)
+    {
+        Device* dev = gDevices[endpointIndex];
+
+        if ((dev->IsReachable()) && (clusterId == OnOff::Id))
+        {
+            ret = HandleWriteOnOffAttribute(static_cast<DeviceOnOff*>(dev), attributeMetadata->attributeId, buffer);
+        }
+    }
+
+    return ret;
 }
 
 void AppTask::LightingActionEventHandler(AppEvent * aEvent)
