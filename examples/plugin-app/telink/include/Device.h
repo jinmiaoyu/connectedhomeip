@@ -85,6 +85,12 @@ public:
 
     bool IsOn();
     bool IsGlobalSceneControl();
+    uint16_t GetOnTime();
+    uint16_t GetOffWaitTime();
+    chip::app::DataModel::Nullable<chip::app::Clusters::OnOff::StartUpOnOffEnum> GetStartUpOnOff();
+    void SetOnTime(int16_t aOnTime);
+    void SetOffWaitTime(int16_t aOffWaitTime);
+    void SetStartUpOnOff(chip::app::DataModel::Nullable<chip::app::Clusters::OnOff::StartUpOnOffEnum> aStartUpOnOff);
     void SetOnOff(bool aOn);
     void Toggle();
 
@@ -97,6 +103,12 @@ private:
 private:
     bool mOn;
     bool mGlobalSceneControl = true;
+    uint16_t mOnTime = 0;
+    uint16_t mOffWaitTime = 0;
+    uint16_t aOnTime;
+    uint16_t aOffWaitTime;
+    chip::app::DataModel::Nullable<chip::app::Clusters::OnOff::StartUpOnOffEnum> aStartUpOnOff;
+    chip::app::DataModel::Nullable<chip::app::Clusters::OnOff::StartUpOnOffEnum> mStartUpOnOff;
     DeviceCallback_fn mChanged_CB;
 };
 

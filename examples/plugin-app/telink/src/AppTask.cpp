@@ -40,6 +40,7 @@ LOG_MODULE_DECLARE(app, CONFIG_CHIP_APP_LOG_LEVEL);
 #define DEVICE_VERSION_DEFAULT 1
 
 #define ZCL_ON_OFF_CLUSTER_REVISION (4u)
+#define ZCL_ON_OFF_FEATURE_MAP (1u)
 namespace {
 bool sfixture_on;
 uint8_t sBrightness;
@@ -64,6 +65,13 @@ static EndpointId gCurrentEndpointId;
 static EndpointId gFirstDynamicEndpointId;
 
 static Device *gDevices[CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT + 1];
+
+constexpr const EmberAfAttributeMinMaxValue StartUpOnOffMinMaxDefaults = { (uint16_t)0xFF, (uint16_t)0x0, (uint16_t)0x2 };
+
+#define DECLARE_DYNAMIC_ATTRIBUTE_WITH_MINMAX(attId, attType, attSizeBytes, attrMask)                                                          \
+    {                                                                                                                              \
+        &StartUpOnOffMinMaxDefaults, attId, attSizeBytes, ZAP_TYPE(attType), attrMask | ZAP_ATTRIBUTE_MASK(EXTERNAL_STORAGE)               \
+    }
 // ---------------------------------------------------------------------------
 //
 // LIGHT ENDPOINT: contains the following clusters:
@@ -72,11 +80,13 @@ static Device *gDevices[CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT + 1];
 
 // Declare On/Off cluster attributes
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(onOffAttrs)
-    DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::OnOff::Id, BOOLEAN, 1, 0), /* onoff */
+    DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::OnOff::Id, BOOLEAN, 1, ZAP_ATTRIBUTE_MASK(TOKENIZE)), /* onoff */
     DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::GlobalSceneControl::Id, BOOLEAN, 1, 0), /* GlobalSceneControl */
-    // DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::OnTime::Id, INT16U, 1, 0), /* OnTime */
-    // DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::OffWaitTime::Id, INT16U, 1, 0), /* OffWaitTime */
-    // DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::StartUpOnOff::Id, STARTUPONOFFENUM, 1, 0), /* StartUpOnOff */
+    DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::OnTime::Id, INT16U, 2, ZAP_ATTRIBUTE_MASK(WRITABLE)), /* OnTime */
+    DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::OffWaitTime::Id, INT16U, 2, ZAP_ATTRIBUTE_MASK(WRITABLE)), /* OffWaitTime */
+    //DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::StartUpOnOff::Id, ENUM8, 1, ZAP_ATTRIBUTE_MASK(TOKENIZE) | ZAP_ATTRIBUTE_MASK(WRITABLE) | ZAP_ATTRIBUTE_MASK(NULLABLE)), /* StartUpOnOff */
+    DECLARE_DYNAMIC_ATTRIBUTE_WITH_MINMAX(OnOff::Attributes::StartUpOnOff::Id, ENUM8, 1, ZAP_ATTRIBUTE_MASK(MIN_MAX) | ZAP_ATTRIBUTE_MASK(TOKENIZE) | ZAP_ATTRIBUTE_MASK(WRITABLE) | ZAP_ATTRIBUTE_MASK(NULLABLE)), /* StartUpOnOff */
+    DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::FeatureMap::Id, BITMAP32, 4, 0), /* FeatureMap */
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 // Declare Descriptor cluster attributes
@@ -100,16 +110,16 @@ constexpr CommandId onOffIncomingCommands[] = {
     kInvalidCommandId,
 };
 
-DECLARE_DYNAMIC_CLUSTER_LIST_BEGIN(dynamicLightClusters)
+DECLARE_DYNAMIC_CLUSTER_LIST_BEGIN(dynamicPluginClusters)
     DECLARE_DYNAMIC_CLUSTER(OnOff::Id, onOffAttrs, ZAP_CLUSTER_MASK(SERVER), onOffIncomingCommands, nullptr),
     DECLARE_DYNAMIC_CLUSTER(Descriptor::Id, descriptorAttrs, ZAP_CLUSTER_MASK(SERVER), nullptr, nullptr),
 DECLARE_DYNAMIC_CLUSTER_LIST_END;
 
-// Declare Dynamic Light endpoint
-DECLARE_DYNAMIC_ENDPOINT(dynamicLightEndpoint, dynamicLightClusters);
-DataVersion gLight1DataVersions[ArraySize(dynamicLightClusters)];
+// Declare Dynamic Plugin endpoint
+DECLARE_DYNAMIC_ENDPOINT(dynamicPluginEndpoint, dynamicPluginClusters);
+DataVersion gPlugin1DataVersions[ArraySize(dynamicPluginClusters)];
 
-DeviceOnOff Light1("Light 1", "Office");
+DeviceOnOff Plugin1("Dynamic Plugin 1", "Office");
 }
 
 int AddDeviceEndpoint(Device* dev, EmberAfEndpointType* ep, const Span<const EmberAfDeviceType>& deviceTypeList,
@@ -215,7 +225,7 @@ void AppTask::InitDynamicEndpoints(void)
     uint16_t fixedEndpointCount = emberAfFixedEndpointCount();
     LOG_INF("fixedEndpointCount = %d", fixedEndpointCount);
 
-    Light1.SetReachable(true);
+    Plugin1.SetReachable(true);
 
     for (size_t i = 0; i < CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT; i++)
     {
@@ -233,9 +243,9 @@ void AppTask::InitDynamicEndpoints(void)
     // supported clusters so that ZAP will generated the requisite code.
     emberAfEndpointEnableDisable(emberAfEndpointFromIndex(static_cast<uint16_t>(emberAfFixedEndpointCount() - 1)), false);
 
-    // Add light 1 -> will be mapped to ZCL endpoints 3
-    AddDeviceEndpoint(&Light1, &dynamicLightEndpoint, Span<const EmberAfDeviceType>(gOnOffDeviceTypes),
-                      Span<DataVersion>(gLight1DataVersions), 1);
+    // Add Plugin 1 -> will be mapped to ZCL endpoints 3
+    AddDeviceEndpoint(&Plugin1, &dynamicPluginEndpoint, Span<const EmberAfDeviceType>(gOnOffDeviceTypes),
+                      Span<DataVersion>(gPlugin1DataVersions), 1);
 
     LOG_INF("InitDynamicEndpoints: Done");
 }
@@ -254,9 +264,27 @@ Protocols::InteractionModel::Status HandleReadOnOffAttribute(DeviceOnOff* dev, c
         uint16_t rev = ZCL_ON_OFF_CLUSTER_REVISION;
         memcpy(buffer, &rev, sizeof(rev));
     }
-    else if ((attributeId == OnOff::Attributes::GlobalSceneControl::Id))
+    else if ((attributeId == OnOff::Attributes::GlobalSceneControl::Id) && (maxReadLength == 1))
     {
         *buffer = dev->IsGlobalSceneControl() ? 1 : 0;
+    }
+    else if ((attributeId == OnOff::Attributes::OnTime::Id) && (maxReadLength == 2))
+    {
+        *buffer = dev->DeviceOnOff::GetOnTime();
+    }
+    else if ((attributeId == OnOff::Attributes::OffWaitTime::Id) && (maxReadLength == 2))
+    {
+        *buffer = dev->DeviceOnOff::GetOffWaitTime();
+    }
+    else if ((attributeId == OnOff::Attributes::FeatureMap::Id) && (maxReadLength == 4))
+    {
+        uint32_t featureMap = ZCL_ON_OFF_FEATURE_MAP;
+        memcpy(buffer, &featureMap, sizeof(featureMap));
+    }
+    else if ((attributeId == OnOff::Attributes::StartUpOnOff::Id) && (maxReadLength == 1))
+    {
+        chip::app::DataModel::Nullable<chip::app::Clusters::OnOff::StartUpOnOffEnum> startupOnOff = dev->GetStartUpOnOff();
+        *buffer = startupOnOff.IsNull() ? 0xFF : static_cast<uint8_t>(startupOnOff.Value());
     }
     else
     {
@@ -303,6 +331,40 @@ Protocols::InteractionModel::Status HandleWriteOnOffAttribute(DeviceOnOff * dev,
         {
             dev->SetOnOff(false);
         }
+    }
+    else if ((attributeId == OnOff::Attributes::OnTime::Id) && (dev->IsReachable()))
+    {
+        uint16_t onTime;
+        memcpy(&onTime, buffer, sizeof(onTime));
+        dev->SetOnTime(onTime);
+    }
+    else if ((attributeId == OnOff::Attributes::OffWaitTime::Id) && (dev->IsReachable()))
+    {
+        uint16_t offWaitTime;
+        memcpy(&offWaitTime, buffer, sizeof(offWaitTime));
+        dev->SetOffWaitTime(offWaitTime);
+    }
+    else if ((attributeId == OnOff::Attributes::StartUpOnOff::Id) && (dev->IsReachable()))
+    {
+        ChipLogProgress(DeviceLayer, "Received StartUpOnOff value: %d", *buffer);
+        chip::app::DataModel::Nullable<chip::app::Clusters::OnOff::StartUpOnOffEnum> startupOnOff;
+        if (*buffer == 0xFF)
+        {
+            startupOnOff.SetNull();
+        }
+        else
+        {
+            if (*buffer == 0) {
+                startupOnOff.SetNonNull(chip::app::Clusters::OnOff::StartUpOnOffEnum::kOff);
+            } else if (*buffer == 0x1) {
+                startupOnOff.SetNonNull(chip::app::Clusters::OnOff::StartUpOnOffEnum::kOn);
+            } else if (*buffer == 0x2) {
+                startupOnOff.SetNonNull(chip::app::Clusters::OnOff::StartUpOnOffEnum::kToggle);
+            } else {
+                startupOnOff.SetNonNull(chip::app::Clusters::OnOff::StartUpOnOffEnum::kUnknownEnumValue);
+            }
+        }
+        dev->SetStartUpOnOff(startupOnOff);
     }
     else
     {

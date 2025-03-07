@@ -129,6 +129,36 @@ bool DeviceOnOff::IsGlobalSceneControl()
     return mGlobalSceneControl;
 }
 
+uint16_t DeviceOnOff::GetOnTime()
+{
+    return mOnTime;
+}
+
+uint16_t DeviceOnOff::GetOffWaitTime()
+{
+    return mOffWaitTime;
+}
+
+chip::app::DataModel::Nullable<chip::app::Clusters::OnOff::StartUpOnOffEnum> DeviceOnOff::GetStartUpOnOff()
+{
+    return mStartUpOnOff;
+}
+
+void DeviceOnOff::SetOnTime(int16_t aOnTime)
+{
+    mOnTime = aOnTime;
+}
+
+void DeviceOnOff::SetOffWaitTime(int16_t aOffWaitTime)
+{
+    mOffWaitTime = aOffWaitTime;
+}
+
+void DeviceOnOff::SetStartUpOnOff(chip::app::DataModel::Nullable<chip::app::Clusters::OnOff::StartUpOnOffEnum> aStartUpOnOff)
+{
+    mStartUpOnOff = aStartUpOnOff;
+}
+
 void DeviceOnOff::SetOnOff(bool aOn)
 {
     bool changed;
