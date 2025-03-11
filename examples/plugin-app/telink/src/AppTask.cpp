@@ -29,6 +29,8 @@
 #include <app/util/af-types.h>
 #include <app/util/attribute-storage.h>
 #include <app/util/endpoint-config-api.h>
+#include <app/clusters/identify-server/identify-server.h>
+#include <app-common/zap-generated/callback.h>
 
 using namespace chip::app::Clusters;
 
@@ -39,8 +41,14 @@ LOG_MODULE_DECLARE(app, CONFIG_CHIP_APP_LOG_LEVEL);
 // Device Version for dynamic endpoints:
 #define DEVICE_VERSION_DEFAULT 1
 
+#define kFirstDynamicEndpointId 3
+
 #define ZCL_ON_OFF_CLUSTER_REVISION (4u)
 #define ZCL_ON_OFF_FEATURE_MAP (1u)
+#define ZCL_IDENTIFY_CLUSTER_REVISION (4u)
+#define ZCL_IDENTIFY_FEATURE_MAP (0u)
+#define ZCL_GROUPS_CLUSTER_REVISION (4u)
+#define ZCL_GROUPS_FEATURE_MAP (1u)
 namespace {
 bool sfixture_on;
 uint8_t sBrightness;
@@ -58,6 +66,9 @@ const int kNodeLabelSize = 32;
 const int kUniqueIdSize  = 32;
 // Current ZCL implementation of Struct uses a max-size array of 254 bytes
 const int kDescriptorAttributeArraySize = 254;
+const int kNameSupport = 128;
+
+constexpr Identify::IdentifyTypeEnum kIdentifyType = Identify::IdentifyTypeEnum::kVisibleIndicator;
 
 const EmberAfDeviceType gOnOffDeviceTypes[] = { { DEVICE_TYPE_LO_ON_OFF_PLUG, DEVICE_VERSION_DEFAULT } };
 
@@ -74,32 +85,43 @@ constexpr const EmberAfAttributeMinMaxValue StartUpOnOffMinMaxDefaults = { (uint
     }
 // ---------------------------------------------------------------------------
 //
-// LIGHT ENDPOINT: contains the following clusters:
+// Plugin ENDPOINT: contains the following clusters:
 //   - On/Off
 //   - Descriptor
+//   - Identify
+//   - Groups
 
 // Declare On/Off cluster attributes
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(onOffAttrs)
-    DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::OnOff::Id, BOOLEAN, 1, ZAP_ATTRIBUTE_MASK(TOKENIZE)), /* onoff */
+    DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::OnOff::Id, BOOLEAN, 1, ZAP_ATTRIBUTE_MASK(TOKENIZE)), /* OnOff */
     DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::GlobalSceneControl::Id, BOOLEAN, 1, 0), /* GlobalSceneControl */
     DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::OnTime::Id, INT16U, 2, ZAP_ATTRIBUTE_MASK(WRITABLE)), /* OnTime */
     DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::OffWaitTime::Id, INT16U, 2, ZAP_ATTRIBUTE_MASK(WRITABLE)), /* OffWaitTime */
-    //DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::StartUpOnOff::Id, ENUM8, 1, ZAP_ATTRIBUTE_MASK(TOKENIZE) | ZAP_ATTRIBUTE_MASK(WRITABLE) | ZAP_ATTRIBUTE_MASK(NULLABLE)), /* StartUpOnOff */
     DECLARE_DYNAMIC_ATTRIBUTE_WITH_MINMAX(OnOff::Attributes::StartUpOnOff::Id, ENUM8, 1, ZAP_ATTRIBUTE_MASK(MIN_MAX) | ZAP_ATTRIBUTE_MASK(TOKENIZE) | ZAP_ATTRIBUTE_MASK(WRITABLE) | ZAP_ATTRIBUTE_MASK(NULLABLE)), /* StartUpOnOff */
     DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::FeatureMap::Id, BITMAP32, 4, 0), /* FeatureMap */
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
-// Declare Descriptor cluster attributes
-DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(descriptorAttrs)
-    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::DeviceTypeList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* device list */
-    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::ServerList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* server list */
-    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::ClientList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* client list */
-    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::PartsList::Id, ARRAY, kDescriptorAttributeArraySize, 0),  /* parts list */
+// Declare Identify cluster attributes
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(identifyAttrs)
+    DECLARE_DYNAMIC_ATTRIBUTE(Identify::Attributes::IdentifyTime::Id, INT16U, 2, ZAP_ATTRIBUTE_MASK(WRITABLE)), /* IdentifyTime */
+    DECLARE_DYNAMIC_ATTRIBUTE(Identify::Attributes::IdentifyType::Id, ENUM8, 1, 0), /* IdentifyType */
+    DECLARE_DYNAMIC_ATTRIBUTE(Identify::Attributes::FeatureMap::Id, BITMAP32, 4, 0), /* FeatureMap */
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
-// Declare Cluster List for Bridged Light endpoint
-// TODO: It's not clear whether it would be better to get the command lists from
-// the ZAP config on our last fixed endpoint instead.
+// Declare Descriptor cluster attributes
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(descriptorAttrs)
+    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::DeviceTypeList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* DeviceTypeList */
+    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::ServerList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* ServerList */
+    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::ClientList::Id, ARRAY, kDescriptorAttributeArraySize, 0), /* ClientList */
+    DECLARE_DYNAMIC_ATTRIBUTE(Descriptor::Attributes::PartsList::Id, ARRAY, kDescriptorAttributeArraySize, 0),  /* PartsList */
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
+
+// Declare Groups cluster attributes
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(groupsAttrs)
+    DECLARE_DYNAMIC_ATTRIBUTE(Groups::Attributes::NameSupport::Id, BITMAP8, 1, 0), /* NameSupport */
+    DECLARE_DYNAMIC_ATTRIBUTE(Groups::Attributes::FeatureMap::Id, BITMAP32, 4, 0), /* FeatureMap */
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
+
 constexpr CommandId onOffIncomingCommands[] = {
     app::Clusters::OnOff::Commands::Off::Id,
     app::Clusters::OnOff::Commands::On::Id,
@@ -110,9 +132,56 @@ constexpr CommandId onOffIncomingCommands[] = {
     kInvalidCommandId,
 };
 
+constexpr CommandId identifyIncomingCommands[] = {
+    app::Clusters::Identify::Commands::Identify::Id,
+    app::Clusters::Identify::Commands::TriggerEffect::Id,
+    kInvalidCommandId,
+};
+
+constexpr CommandId groupsIncomingCommands[] = {
+    app::Clusters::Groups::Commands::AddGroup::Id,
+    app::Clusters::Groups::Commands::ViewGroup::Id,
+    app::Clusters::Groups::Commands::GetGroupMembership::Id,
+    app::Clusters::Groups::Commands::RemoveGroup::Id,
+    app::Clusters::Groups::Commands::RemoveAllGroups::Id,
+    app::Clusters::Groups::Commands::AddGroupIfIdentifying::Id,
+    kInvalidCommandId,
+};
+
+constexpr CommandId groupsOutgoingCommands[] = {
+    app::Clusters::Groups::Commands::AddGroupResponse::Id,
+    app::Clusters::Groups::Commands::ViewGroupResponse::Id,
+    app::Clusters::Groups::Commands::GetGroupMembershipResponse::Id,
+    app::Clusters::Groups::Commands::RemoveGroupResponse::Id,
+    kInvalidCommandId,
+};
+
+const EmberAfGenericClusterFunction chipFuncArrayOnOffServer[] = {                                                             \
+        (EmberAfGenericClusterFunction) emberAfOnOffClusterServerInitCallback,                                                     \
+        (EmberAfGenericClusterFunction) MatterOnOffClusterServerShutdownCallback,                                                  \
+    };
+
+const EmberAfGenericClusterFunction chipFuncArrayIdentifyServer[] = {                                                          \
+    (EmberAfGenericClusterFunction) emberAfIdentifyClusterServerInitCallback,                                                  \
+    (EmberAfGenericClusterFunction) MatterIdentifyClusterServerAttributeChangedCallback,                                       \
+};
+
+#define DECLARE_DYNAMIC_ONOFF_CLUSTER(clusterId, clusterAttrs, role, incomingCommands, outgoingCommands)                                 \
+    {                                                                                                                              \
+        clusterId, clusterAttrs, ArraySize(clusterAttrs), 0, role, chipFuncArrayOnOffServer, incomingCommands, outgoingCommands                        \
+    }
+
+#define DECLARE_DYNAMIC_IDENTIFY_CLUSTER(clusterId, clusterAttrs, role, incomingCommands, outgoingCommands)                                 \
+    {                                                                                                                              \
+        clusterId, clusterAttrs, ArraySize(clusterAttrs), 0, role, chipFuncArrayIdentifyServer, incomingCommands, outgoingCommands                        \
+    }
+
+// Declare Cluster List for Dynamic Plugin endpoint
 DECLARE_DYNAMIC_CLUSTER_LIST_BEGIN(dynamicPluginClusters)
-    DECLARE_DYNAMIC_CLUSTER(OnOff::Id, onOffAttrs, ZAP_CLUSTER_MASK(SERVER), onOffIncomingCommands, nullptr),
+    DECLARE_DYNAMIC_ONOFF_CLUSTER(OnOff::Id, onOffAttrs, ZAP_CLUSTER_MASK(SERVER) | ZAP_CLUSTER_MASK(INIT_FUNCTION) | ZAP_CLUSTER_MASK(SHUTDOWN_FUNCTION), onOffIncomingCommands, nullptr),
     DECLARE_DYNAMIC_CLUSTER(Descriptor::Id, descriptorAttrs, ZAP_CLUSTER_MASK(SERVER), nullptr, nullptr),
+    DECLARE_DYNAMIC_IDENTIFY_CLUSTER(Identify::Id, identifyAttrs, ZAP_CLUSTER_MASK(SERVER) | ZAP_CLUSTER_MASK(INIT_FUNCTION) | ZAP_CLUSTER_MASK(ATTRIBUTE_CHANGED_FUNCTION), identifyIncomingCommands, nullptr),
+    DECLARE_DYNAMIC_IDENTIFY_CLUSTER(Groups::Id, groupsAttrs, ZAP_CLUSTER_MASK(SERVER) | ZAP_CLUSTER_MASK(INIT_FUNCTION), groupsIncomingCommands, groupsOutgoingCommands),
 DECLARE_DYNAMIC_CLUSTER_LIST_END;
 
 // Declare Dynamic Plugin endpoint
@@ -294,6 +363,64 @@ Protocols::InteractionModel::Status HandleReadOnOffAttribute(DeviceOnOff* dev, c
     return Protocols::InteractionModel::Status::Success;
 }
 
+Protocols::InteractionModel::Status HandleReadIdentifyAttribute(DeviceOnOff* dev, chip::AttributeId attributeId, uint8_t* buffer,
+    uint16_t maxReadLength)
+{
+    ChipLogProgress(DeviceLayer, "HandleReadIdentifyAttribute: attrId = %d, maxReadLength = %d", attributeId, maxReadLength);
+
+    if ((attributeId == Identify::Attributes::IdentifyTime::Id) && (maxReadLength == 2))
+    {
+        *buffer = dev->DeviceOnOff::GetIdentifyTime();
+    }
+    else if ((attributeId == Identify::Attributes::ClusterRevision::Id) && (maxReadLength == 2))
+    {
+        uint16_t rev = ZCL_IDENTIFY_CLUSTER_REVISION;
+        memcpy(buffer, &rev, sizeof(rev));
+    }
+    else if ((attributeId == Identify::Attributes::FeatureMap::Id) && (maxReadLength == 4))
+    {
+        uint32_t featureMap = ZCL_IDENTIFY_FEATURE_MAP;
+        memcpy(buffer, &featureMap, sizeof(featureMap));
+    }
+    else if ((attributeId == Identify::Attributes::IdentifyType::Id) && (maxReadLength == 1))
+    {
+        *buffer = static_cast<uint8_t>(kIdentifyType);
+    }
+    else
+    {
+        return Protocols::InteractionModel::Status::Failure;
+    }
+
+    return Protocols::InteractionModel::Status::Success;
+}
+
+Protocols::InteractionModel::Status HandleReadGroupsAttribute(DeviceOnOff* dev, chip::AttributeId attributeId, uint8_t* buffer,
+    uint16_t maxReadLength)
+{
+    ChipLogProgress(DeviceLayer, "HandleReadGroupsAttribute: attrId = %d, maxReadLength = %d", attributeId, maxReadLength);
+
+    if ((attributeId == Groups::Attributes::NameSupport::Id) && (maxReadLength == 1))
+    {
+        *buffer = static_cast<uint8_t>(kNameSupport);
+    }
+    else if ((attributeId == Groups::Attributes::ClusterRevision::Id) && (maxReadLength == 2))
+    {
+        uint16_t rev = ZCL_GROUPS_CLUSTER_REVISION;
+        memcpy(buffer, &rev, sizeof(rev));
+    }
+    else if ((attributeId == Groups::Attributes::FeatureMap::Id) && (maxReadLength == 4))
+    {
+        uint32_t featureMap = ZCL_GROUPS_FEATURE_MAP;
+        memcpy(buffer, &featureMap, sizeof(featureMap));
+    }
+    else
+    {
+        return Protocols::InteractionModel::Status::Failure;
+    }
+
+    return Protocols::InteractionModel::Status::Success;
+}
+
 Protocols::InteractionModel::Status emberAfExternalAttributeReadCallback(EndpointId endpoint, ClusterId clusterId,
     const EmberAfAttributeMetadata* attributeMetadata,
     uint8_t* buffer, uint16_t maxReadLength)
@@ -312,10 +439,29 @@ Protocols::InteractionModel::Status emberAfExternalAttributeReadCallback(Endpoin
         {
             ret = HandleReadOnOffAttribute(static_cast<DeviceOnOff*>(dev), attributeMetadata->attributeId, buffer, maxReadLength);
         }
+        else if (clusterId == Identify::Id)
+        {
+            ret = HandleReadIdentifyAttribute(static_cast<DeviceOnOff*>(dev), attributeMetadata->attributeId, buffer, maxReadLength);
+        }
+        else if (clusterId == Groups::Id)
+        {
+            ret = HandleReadGroupsAttribute(static_cast<DeviceOnOff*>(dev), attributeMetadata->attributeId, buffer, maxReadLength);
+        }
     }
 
     return ret;
 }
+
+void OnIdentifyTriggerEffect(::Identify * identify)
+{
+    AppTaskCommon::IdentifyEffectHandler(identify->mCurrentEffectIdentifier);
+}
+
+struct Identify sIdentify0 = {
+    kFirstDynamicEndpointId,           AppTaskCommon::IdentifyStartHandler,
+    AppTaskCommon::IdentifyStopHandler, Clusters::Identify::IdentifyTypeEnum::kVisibleIndicator,
+    OnIdentifyTriggerEffect,
+};
 
 Protocols::InteractionModel::Status HandleWriteOnOffAttribute(DeviceOnOff * dev, chip::AttributeId attributeId, uint8_t * buffer)
 {
@@ -354,17 +500,27 @@ Protocols::InteractionModel::Status HandleWriteOnOffAttribute(DeviceOnOff * dev,
         }
         else
         {
-            if (*buffer == 0) {
-                startupOnOff.SetNonNull(chip::app::Clusters::OnOff::StartUpOnOffEnum::kOff);
-            } else if (*buffer == 0x1) {
-                startupOnOff.SetNonNull(chip::app::Clusters::OnOff::StartUpOnOffEnum::kOn);
-            } else if (*buffer == 0x2) {
-                startupOnOff.SetNonNull(chip::app::Clusters::OnOff::StartUpOnOffEnum::kToggle);
-            } else {
-                startupOnOff.SetNonNull(chip::app::Clusters::OnOff::StartUpOnOffEnum::kUnknownEnumValue);
-            }
+            startupOnOff.SetNonNull(static_cast<chip::app::Clusters::OnOff::StartUpOnOffEnum>(*buffer));
         }
         dev->SetStartUpOnOff(startupOnOff);
+    }
+    else
+    {
+        return Protocols::InteractionModel::Status::Failure;
+    }
+
+    return Protocols::InteractionModel::Status::Success;
+}
+
+Protocols::InteractionModel::Status HandleWriteIdentifyAttribute(DeviceOnOff * dev, chip::AttributeId attributeId, uint8_t * buffer)
+{
+    ChipLogProgress(DeviceLayer, "HandleWriteIdentifyAttribute: attrId = %d", attributeId);
+
+    if ((attributeId == Identify::Attributes::IdentifyTime::Id) && (dev->IsReachable()))
+    {
+        uint16_t identifyTime;
+        memcpy(&identifyTime, buffer, sizeof(identifyTime));
+        dev->SetIdentifyTime(identifyTime);
     }
     else
     {
@@ -391,6 +547,10 @@ Protocols::InteractionModel::Status emberAfExternalAttributeWriteCallback(Endpoi
         if ((dev->IsReachable()) && (clusterId == OnOff::Id))
         {
             ret = HandleWriteOnOffAttribute(static_cast<DeviceOnOff*>(dev), attributeMetadata->attributeId, buffer);
+        }
+        else if ((dev->IsReachable()) && (clusterId == Identify::Id))
+        {
+            ret = HandleWriteIdentifyAttribute(static_cast<DeviceOnOff*>(dev), attributeMetadata->attributeId, buffer);
         }
     }
 

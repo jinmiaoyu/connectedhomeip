@@ -88,11 +88,15 @@ public:
     uint16_t GetOnTime();
     uint16_t GetOffWaitTime();
     chip::app::DataModel::Nullable<chip::app::Clusters::OnOff::StartUpOnOffEnum> GetStartUpOnOff();
-    void SetOnTime(int16_t aOnTime);
-    void SetOffWaitTime(int16_t aOffWaitTime);
+    void SetOnTime(uint16_t aOnTime);
+    void SetOffWaitTime(uint16_t aOffWaitTime);
     void SetStartUpOnOff(chip::app::DataModel::Nullable<chip::app::Clusters::OnOff::StartUpOnOffEnum> aStartUpOnOff);
     void SetOnOff(bool aOn);
     void Toggle();
+
+    uint16_t GetIdentifyTime();
+    chip::app::Clusters::Identify::IdentifyTypeEnum GetIdentifyType();
+    void SetIdentifyTime(uint16_t aIdentifyTime);
 
     using DeviceCallback_fn = std::function<void(DeviceOnOff *, DeviceOnOff::Changed_t)>;
     void SetChangeCallback(DeviceCallback_fn aChanged_CB);
@@ -110,6 +114,10 @@ private:
     chip::app::DataModel::Nullable<chip::app::Clusters::OnOff::StartUpOnOffEnum> aStartUpOnOff;
     chip::app::DataModel::Nullable<chip::app::Clusters::OnOff::StartUpOnOffEnum> mStartUpOnOff;
     DeviceCallback_fn mChanged_CB;
+
+    uint16_t aIdentifyTime;
+    uint16_t mIdentifyTime = 0;
+    chip::app::Clusters::Identify::IdentifyTypeEnum mIdentifyType;
 };
 
 class DeviceSwitch : public Device

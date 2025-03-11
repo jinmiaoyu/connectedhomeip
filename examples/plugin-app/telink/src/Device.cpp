@@ -22,6 +22,7 @@
 #include <crypto/RandUtils.h>
 #include <cstdio>
 #include <platform/CHIPDeviceLayer.h>
+// #include <app/InteractionModelEngine.h>
 
 #include <string>
 
@@ -144,12 +145,12 @@ chip::app::DataModel::Nullable<chip::app::Clusters::OnOff::StartUpOnOffEnum> Dev
     return mStartUpOnOff;
 }
 
-void DeviceOnOff::SetOnTime(int16_t aOnTime)
+void DeviceOnOff::SetOnTime(uint16_t aOnTime)
 {
     mOnTime = aOnTime;
 }
 
-void DeviceOnOff::SetOffWaitTime(int16_t aOffWaitTime)
+void DeviceOnOff::SetOffWaitTime(uint16_t aOffWaitTime)
 {
     mOffWaitTime = aOffWaitTime;
 }
@@ -190,6 +191,21 @@ void DeviceOnOff::HandleDeviceChange(Device * device, Device::Changed_t changeMa
     {
         mChanged_CB(this, (DeviceOnOff::Changed_t) changeMask);
     }
+}
+
+uint16_t DeviceOnOff::GetIdentifyTime()
+{
+    return mIdentifyTime;
+}
+
+chip::app::Clusters::Identify::IdentifyTypeEnum DeviceOnOff::GetIdentifyType()
+{
+    return mIdentifyType;
+}
+
+void DeviceOnOff::SetIdentifyTime(uint16_t aIdentifyTime)
+{
+    mIdentifyTime = aIdentifyTime;
 }
 
 DeviceSwitch::DeviceSwitch(const char * szDeviceName, std::string szLocation, uint32_t aFeatureMap) :
