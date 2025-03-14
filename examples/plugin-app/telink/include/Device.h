@@ -98,6 +98,13 @@ public:
     chip::app::Clusters::Identify::IdentifyTypeEnum GetIdentifyType();
     void SetIdentifyTime(uint16_t aIdentifyTime);
 
+    chip::app::DataModel::Nullable<uint8_t> GetCurrentLevel();
+    uint8_t GetOptions();
+    chip::app::DataModel::Nullable<uint8_t> GetOnLevel();
+    void SetCurrentLevel(chip::app::DataModel::Nullable<uint8_t> aCurrentLevel);
+    void SetOptions(uint8_t aOptions);
+    void SetOnLevel(chip::app::DataModel::Nullable<uint8_t> aOnLevel);
+
     using DeviceCallback_fn = std::function<void(DeviceOnOff *, DeviceOnOff::Changed_t)>;
     void SetChangeCallback(DeviceCallback_fn aChanged_CB);
 
@@ -118,6 +125,13 @@ private:
     uint16_t aIdentifyTime;
     uint16_t mIdentifyTime = 0;
     chip::app::Clusters::Identify::IdentifyTypeEnum mIdentifyType;
+
+    chip::app::DataModel::Nullable<uint8_t> mCurrentLevel = 1;
+    chip::app::DataModel::Nullable<uint8_t> aCurrentLevel;
+    uint8_t mOptions;
+    uint8_t aOptions;
+    chip::app::DataModel::Nullable<uint8_t> mOnLevel = 0xFF;
+    chip::app::DataModel::Nullable<uint8_t> aOnLevel;
 };
 
 class DeviceSwitch : public Device

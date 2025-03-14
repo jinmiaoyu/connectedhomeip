@@ -32,6 +32,8 @@
 #include <app/clusters/identify-server/identify-server.h>
 #include <app-common/zap-generated/callback.h>
 
+#include "attribute-storage-external.h"
+
 using namespace chip::app::Clusters;
 
 LOG_MODULE_DECLARE(app, CONFIG_CHIP_APP_LOG_LEVEL);
@@ -49,6 +51,8 @@ LOG_MODULE_DECLARE(app, CONFIG_CHIP_APP_LOG_LEVEL);
 #define ZCL_IDENTIFY_FEATURE_MAP (0u)
 #define ZCL_GROUPS_CLUSTER_REVISION (4u)
 #define ZCL_GROUPS_FEATURE_MAP (1u)
+#define ZCL_LEVEL_CONTROL_CLUSTER_REVISION (6u)
+#define ZCL_LEVEL_CONTROL_FEATURE_MAP (1u)
 namespace {
 bool sfixture_on;
 uint8_t sBrightness;
@@ -77,11 +81,14 @@ static EndpointId gFirstDynamicEndpointId;
 
 static Device *gDevices[CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT + 1];
 
-constexpr const EmberAfAttributeMinMaxValue StartUpOnOffMinMaxDefaults = { (uint16_t)0xFF, (uint16_t)0x0, (uint16_t)0x2 };
+constexpr const EmberAfAttributeMinMaxValue MinMaxDefaultsArray[] = {
+    { (uint16_t)0xFF, (uint16_t)0x0, (uint16_t)0x2 }, // StartUpOnOffMinMaxDefaults
+    { (uint16_t)0x0, (uint16_t)0x0, (uint16_t)0x3 }   // OptionsMinMaxDefaults
+};
 
-#define DECLARE_DYNAMIC_ATTRIBUTE_WITH_MINMAX(attId, attType, attSizeBytes, attrMask)                                                          \
+#define DECLARE_DYNAMIC_ATTRIBUTE_WITH_MINMAX(attId, attType, attSizeBytes, attrMask, minMaxIndex)                                                          \
     {                                                                                                                              \
-        &StartUpOnOffMinMaxDefaults, attId, attSizeBytes, ZAP_TYPE(attType), attrMask | ZAP_ATTRIBUTE_MASK(EXTERNAL_STORAGE)               \
+        &MinMaxDefaultsArray[minMaxIndex], attId, attSizeBytes, ZAP_TYPE(attType), attrMask | ZAP_ATTRIBUTE_MASK(EXTERNAL_STORAGE)               \
     }
 // ---------------------------------------------------------------------------
 //
@@ -97,7 +104,7 @@ DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(onOffAttrs)
     DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::GlobalSceneControl::Id, BOOLEAN, 1, 0), /* GlobalSceneControl */
     DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::OnTime::Id, INT16U, 2, ZAP_ATTRIBUTE_MASK(WRITABLE)), /* OnTime */
     DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::OffWaitTime::Id, INT16U, 2, ZAP_ATTRIBUTE_MASK(WRITABLE)), /* OffWaitTime */
-    DECLARE_DYNAMIC_ATTRIBUTE_WITH_MINMAX(OnOff::Attributes::StartUpOnOff::Id, ENUM8, 1, ZAP_ATTRIBUTE_MASK(MIN_MAX) | ZAP_ATTRIBUTE_MASK(TOKENIZE) | ZAP_ATTRIBUTE_MASK(WRITABLE) | ZAP_ATTRIBUTE_MASK(NULLABLE)), /* StartUpOnOff */
+    DECLARE_DYNAMIC_ATTRIBUTE_WITH_MINMAX(OnOff::Attributes::StartUpOnOff::Id, ENUM8, 1, ZAP_ATTRIBUTE_MASK(MIN_MAX) | ZAP_ATTRIBUTE_MASK(TOKENIZE) | ZAP_ATTRIBUTE_MASK(WRITABLE) | ZAP_ATTRIBUTE_MASK(NULLABLE), 0), /* StartUpOnOff */
     DECLARE_DYNAMIC_ATTRIBUTE(OnOff::Attributes::FeatureMap::Id, BITMAP32, 4, 0), /* FeatureMap */
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
@@ -120,6 +127,14 @@ DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(groupsAttrs)
     DECLARE_DYNAMIC_ATTRIBUTE(Groups::Attributes::NameSupport::Id, BITMAP8, 1, 0), /* NameSupport */
     DECLARE_DYNAMIC_ATTRIBUTE(Groups::Attributes::FeatureMap::Id, BITMAP32, 4, 0), /* FeatureMap */
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
+
+// Declare Level Control cluster attributes
+DECLARE_DYNAMIC_ATTRIBUTE_LIST_BEGIN(levelControlAttrs)
+    DECLARE_DYNAMIC_ATTRIBUTE(LevelControl::Attributes::CurrentLevel::Id, INT8U, 1, ZAP_ATTRIBUTE_MASK(TOKENIZE) | ZAP_ATTRIBUTE_MASK(NULLABLE)), /* CurrentLevel */
+    DECLARE_DYNAMIC_ATTRIBUTE_WITH_MINMAX(LevelControl::Attributes::Options::Id, BITMAP8, 1, ZAP_ATTRIBUTE_MASK(MIN_MAX) | ZAP_ATTRIBUTE_MASK(WRITABLE), 1), /* Options */
+    DECLARE_DYNAMIC_ATTRIBUTE(LevelControl::Attributes::OnLevel::Id, INT8U, 1, ZAP_ATTRIBUTE_MASK(WRITABLE) | ZAP_ATTRIBUTE_MASK(NULLABLE)), /* OnLevel */
+    DECLARE_DYNAMIC_ATTRIBUTE(LevelControl::Attributes::FeatureMap::Id, BITMAP32, 4, 0), /* FeatureMap */
 DECLARE_DYNAMIC_ATTRIBUTE_LIST_END();
 
 constexpr CommandId onOffIncomingCommands[] = {
@@ -156,6 +171,18 @@ constexpr CommandId groupsOutgoingCommands[] = {
     kInvalidCommandId,
 };
 
+constexpr CommandId levelControlIncomingCommands[] = {
+    app::Clusters::LevelControl::Commands::MoveToLevel::Id,
+    app::Clusters::LevelControl::Commands::Move::Id,
+    app::Clusters::LevelControl::Commands::Step::Id,
+    app::Clusters::LevelControl::Commands::Stop::Id,
+    app::Clusters::LevelControl::Commands::MoveToLevelWithOnOff::Id,
+    app::Clusters::LevelControl::Commands::MoveWithOnOff::Id,
+    app::Clusters::LevelControl::Commands::StepWithOnOff::Id,
+    app::Clusters::LevelControl::Commands::StopWithOnOff::Id,
+    kInvalidCommandId,
+};
+
 const EmberAfGenericClusterFunction chipFuncArrayOnOffServer[] = {                                                             \
         (EmberAfGenericClusterFunction) emberAfOnOffClusterServerInitCallback,                                                     \
         (EmberAfGenericClusterFunction) MatterOnOffClusterServerShutdownCallback,                                                  \
@@ -164,6 +191,11 @@ const EmberAfGenericClusterFunction chipFuncArrayOnOffServer[] = {              
 const EmberAfGenericClusterFunction chipFuncArrayIdentifyServer[] = {                                                          \
     (EmberAfGenericClusterFunction) emberAfIdentifyClusterServerInitCallback,                                                  \
     (EmberAfGenericClusterFunction) MatterIdentifyClusterServerAttributeChangedCallback,                                       \
+};
+
+const EmberAfGenericClusterFunction chipFuncArrayLevelControlServer[] = {                                                      \
+    (EmberAfGenericClusterFunction) emberAfLevelControlClusterServerInitCallback,                                              \
+    (EmberAfGenericClusterFunction) MatterLevelControlClusterServerShutdownCallback,                                           \
 };
 
 #define DECLARE_DYNAMIC_ONOFF_CLUSTER(clusterId, clusterAttrs, role, incomingCommands, outgoingCommands)                                 \
@@ -176,12 +208,18 @@ const EmberAfGenericClusterFunction chipFuncArrayIdentifyServer[] = {           
         clusterId, clusterAttrs, ArraySize(clusterAttrs), 0, role, chipFuncArrayIdentifyServer, incomingCommands, outgoingCommands                        \
     }
 
+#define DECLARE_DYNAMIC_LEVEL_CONTROL_CLUSTER(clusterId, clusterAttrs, role, incomingCommands, outgoingCommands)                                 \
+    {                                                                                                                              \
+        clusterId, clusterAttrs, ArraySize(clusterAttrs), 0, role, chipFuncArrayLevelControlServer, incomingCommands, outgoingCommands                        \
+    }
+
 // Declare Cluster List for Dynamic Plugin endpoint
 DECLARE_DYNAMIC_CLUSTER_LIST_BEGIN(dynamicPluginClusters)
     DECLARE_DYNAMIC_ONOFF_CLUSTER(OnOff::Id, onOffAttrs, ZAP_CLUSTER_MASK(SERVER) | ZAP_CLUSTER_MASK(INIT_FUNCTION) | ZAP_CLUSTER_MASK(SHUTDOWN_FUNCTION), onOffIncomingCommands, nullptr),
     DECLARE_DYNAMIC_CLUSTER(Descriptor::Id, descriptorAttrs, ZAP_CLUSTER_MASK(SERVER), nullptr, nullptr),
     DECLARE_DYNAMIC_IDENTIFY_CLUSTER(Identify::Id, identifyAttrs, ZAP_CLUSTER_MASK(SERVER) | ZAP_CLUSTER_MASK(INIT_FUNCTION) | ZAP_CLUSTER_MASK(ATTRIBUTE_CHANGED_FUNCTION), identifyIncomingCommands, nullptr),
     DECLARE_DYNAMIC_IDENTIFY_CLUSTER(Groups::Id, groupsAttrs, ZAP_CLUSTER_MASK(SERVER) | ZAP_CLUSTER_MASK(INIT_FUNCTION), groupsIncomingCommands, groupsOutgoingCommands),
+    DECLARE_DYNAMIC_LEVEL_CONTROL_CLUSTER(LevelControl::Id, levelControlAttrs, ZAP_CLUSTER_MASK(SERVER) | ZAP_CLUSTER_MASK(INIT_FUNCTION) | ZAP_CLUSTER_MASK(SHUTDOWN_FUNCTION), levelControlIncomingCommands, nullptr),
 DECLARE_DYNAMIC_CLUSTER_LIST_END;
 
 // Declare Dynamic Plugin endpoint
@@ -190,6 +228,11 @@ DataVersion gPlugin1DataVersions[ArraySize(dynamicPluginClusters)];
 
 DeviceOnOff Plugin1("Dynamic Plugin 1", "Office");
 }
+
+extern void emAfCallInitsExternal(chip::EndpointId endpointId);
+// extern void MatterDescriptorPluginServerInitCallback();
+extern void emAfSaveAttributeToStorageIfNeededExternal(uint8_t * data, chip::EndpointId endpoint, chip::ClusterId clusterId,
+    const EmberAfAttributeMetadata * metadata);
 
 int AddDeviceEndpoint(Device* dev, EmberAfEndpointType* ep, const Span<const EmberAfDeviceType>& deviceTypeList,
     const Span<DataVersion>& dataVersionStorage, chip::EndpointId parentEndpointId = chip::kInvalidEndpointId)
@@ -316,6 +359,9 @@ void AppTask::InitDynamicEndpoints(void)
     AddDeviceEndpoint(&Plugin1, &dynamicPluginEndpoint, Span<const EmberAfDeviceType>(gOnOffDeviceTypes),
                       Span<DataVersion>(gPlugin1DataVersions), 1);
 
+    emberAfInitializeAttributesExternal(gCurrentEndpointId);
+    // MatterDescriptorPluginServerInitCallback();
+    emAfCallInitsExternal(gCurrentEndpointId);
     LOG_INF("InitDynamicEndpoints: Done");
 }
 
@@ -421,6 +467,43 @@ Protocols::InteractionModel::Status HandleReadGroupsAttribute(DeviceOnOff* dev, 
     return Protocols::InteractionModel::Status::Success;
 }
 
+Protocols::InteractionModel::Status HandleReadLevelControlAttribute(DeviceOnOff* dev, chip::AttributeId attributeId, uint8_t* buffer,
+    uint16_t maxReadLength)
+{
+    ChipLogProgress(DeviceLayer, "HandleReadLevelControlAttribute: attrId = %d, maxReadLength = %d", attributeId, maxReadLength);
+
+    if ((attributeId == LevelControl::Attributes::CurrentLevel::Id) && (maxReadLength == 1))
+    {
+        chip::app::DataModel::Nullable<uint8_t> currentLevel = dev->GetCurrentLevel();
+        *buffer = currentLevel.IsNull() ? 0xFF : currentLevel.Value();
+    }
+    else if ((attributeId == LevelControl::Attributes::Options::Id) && (maxReadLength == 1))
+    {
+        *buffer = dev->DeviceOnOff::GetOptions();
+    }
+    else if ((attributeId == LevelControl::Attributes::OnLevel::Id) && (maxReadLength == 1))
+    {
+        chip::app::DataModel::Nullable<uint8_t> onLevel = dev->GetOnLevel();
+        *buffer = onLevel.IsNull() ? 0xFF : onLevel.Value();
+    }
+    else if ((attributeId == LevelControl::Attributes::ClusterRevision::Id) && (maxReadLength == 2))
+    {
+        uint16_t rev = ZCL_LEVEL_CONTROL_CLUSTER_REVISION;
+        memcpy(buffer, &rev, sizeof(rev));
+    }
+    else if ((attributeId == LevelControl::Attributes::FeatureMap::Id) && (maxReadLength == 4))
+    {
+        uint32_t featureMap = ZCL_LEVEL_CONTROL_FEATURE_MAP;
+        memcpy(buffer, &featureMap, sizeof(featureMap));
+    }
+    else
+    {
+        return Protocols::InteractionModel::Status::Failure;
+    }
+
+    return Protocols::InteractionModel::Status::Success;
+}
+
 Protocols::InteractionModel::Status emberAfExternalAttributeReadCallback(EndpointId endpoint, ClusterId clusterId,
     const EmberAfAttributeMetadata* attributeMetadata,
     uint8_t* buffer, uint16_t maxReadLength)
@@ -446,6 +529,10 @@ Protocols::InteractionModel::Status emberAfExternalAttributeReadCallback(Endpoin
         else if (clusterId == Groups::Id)
         {
             ret = HandleReadGroupsAttribute(static_cast<DeviceOnOff*>(dev), attributeMetadata->attributeId, buffer, maxReadLength);
+        }
+        else if (clusterId == LevelControl::Id)
+        {
+            ret = HandleReadLevelControlAttribute(static_cast<DeviceOnOff*>(dev), attributeMetadata->attributeId, buffer, maxReadLength);
         }
     }
 
@@ -530,6 +617,48 @@ Protocols::InteractionModel::Status HandleWriteIdentifyAttribute(DeviceOnOff * d
     return Protocols::InteractionModel::Status::Success;
 }
 
+Protocols::InteractionModel::Status HandleWriteLevelControlAttribute(DeviceOnOff * dev, chip::AttributeId attributeId, uint8_t * buffer)
+{
+    ChipLogProgress(DeviceLayer, "HandleWriteLevelControlAttribute: attrId = %d", attributeId);
+
+    if ((attributeId == LevelControl::Attributes::CurrentLevel::Id) && (dev->IsReachable()))
+    {
+        chip::app::DataModel::Nullable<uint8_t> currentLevel;
+        if (*buffer == 0xFF)
+        {
+            currentLevel.SetNull();
+        }
+        else
+        {
+            currentLevel.SetNonNull(*buffer);
+        }
+        dev->SetCurrentLevel(currentLevel);
+    }
+    else if ((attributeId == LevelControl::Attributes::Options::Id) && (dev->IsReachable()))
+    {
+        dev->SetOptions(*buffer);
+    }
+    else if ((attributeId == LevelControl::Attributes::OnLevel::Id) && (dev->IsReachable()))
+    {
+        chip::app::DataModel::Nullable<uint8_t> onLevel;
+        if (*buffer == 0xFF)
+        {
+            onLevel.SetNull();
+        }
+        else
+        {
+            onLevel.SetNonNull(*buffer);
+        }
+        dev->SetOnLevel(onLevel);
+    }
+    else
+    {
+        return Protocols::InteractionModel::Status::Failure;
+    }
+
+    return Protocols::InteractionModel::Status::Success;
+}
+
 Protocols::InteractionModel::Status emberAfExternalAttributeWriteCallback(EndpointId endpoint, ClusterId clusterId,
     const EmberAfAttributeMetadata* attributeMetadata,
     uint8_t* buffer)
@@ -552,6 +681,12 @@ Protocols::InteractionModel::Status emberAfExternalAttributeWriteCallback(Endpoi
         {
             ret = HandleWriteIdentifyAttribute(static_cast<DeviceOnOff*>(dev), attributeMetadata->attributeId, buffer);
         }
+        else if ((dev->IsReachable()) && (clusterId == LevelControl::Id))
+        {
+            ret = HandleWriteLevelControlAttribute(static_cast<DeviceOnOff*>(dev), attributeMetadata->attributeId, buffer);
+        }
+
+        emAfSaveAttributeToStorageIfNeededExternal(buffer, endpoint, clusterId, attributeMetadata);
     }
 
     return ret;

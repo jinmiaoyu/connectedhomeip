@@ -208,6 +208,36 @@ void DeviceOnOff::SetIdentifyTime(uint16_t aIdentifyTime)
     mIdentifyTime = aIdentifyTime;
 }
 
+chip::app::DataModel::Nullable<uint8_t> DeviceOnOff::GetCurrentLevel()
+{
+    return mCurrentLevel;
+}
+
+uint8_t DeviceOnOff::GetOptions()
+{
+    return mOptions;
+}
+
+chip::app::DataModel::Nullable<uint8_t> DeviceOnOff::GetOnLevel()
+{
+    return mOnLevel;
+}
+
+void DeviceOnOff::SetCurrentLevel(chip::app::DataModel::Nullable<uint8_t> aCurrentLevel)
+{
+    mCurrentLevel = aCurrentLevel;
+}
+
+void DeviceOnOff::SetOptions(uint8_t aOptions)
+{
+    mOptions = aOptions;
+}
+
+void DeviceOnOff::SetOnLevel(chip::app::DataModel::Nullable<uint8_t> aOnLevel)
+{
+    mOnLevel = aOnLevel;
+}
+
 DeviceSwitch::DeviceSwitch(const char * szDeviceName, std::string szLocation, uint32_t aFeatureMap) :
     Device(szDeviceName, szLocation)
 {
