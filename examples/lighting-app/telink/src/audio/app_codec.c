@@ -59,7 +59,7 @@ audio_codec_output_t audio_stream_output =
 void app_codec_init()
 {
 	audio_init();
-	audio_set_stream0_dmic_pin(GPIO_FC_PA2, GPIO_FC_PA3, GPIO_FC_PA4);
+    audio_set_stream0_dmic_pin(GPIO_FC_PB4, GPIO_FC_PA2, GPIO_NONE_PIN);
 
 	/****stream0 line in/amic/dmic init****/
     audio_codec_stream0_input_init(&audio_codec_stream0_input);
